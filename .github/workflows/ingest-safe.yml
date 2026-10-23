@@ -1,0 +1,69 @@
+name: Ingesta segura
+
+on:
+  schedule:
+    # Cada 6 horas. GitHub puede demorar unos minutos en horarios pico.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "IDs separados por coma (vacío = todas las fuentes safe)"
+        required: false
+        default: ""
+      limit:
+        description: "Máximo de eventos por fuente"
+        required: false
+        default: "120"
+      dry_run:
+        description: "Solo probar sin escribir en Supabase"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ingest-safe
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Ingesta
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TICKETMASTER_API_KEY: ${{ secrets.TICKETMASTER_API_KEY }}
+          EVENTBRITE_TOKEN: ${{ secrets.EVENTBRITE_TOKEN }}
+          GCBA_RESOURCE_ID: ${{ secrets.GCBA_RESOURCE_ID }}
+          APP_URL: ${{ secrets.APP_URL }}
+          NEXT_PUBLIC_SITE_URL: ${{ secrets.APP_URL }}
+          REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          args="--mode=safe --limit=${{ inputs.limit || '120' }}"
+          if [ -n "${{ inputs.source }}" ]; then
+            args="$args --source=${{ inputs.source }}"
+          fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            args="$args --dry-run"
+          fi
+          npm run ingest -- $args
+
+      - name: Resumen de fallos
+        if: failure()
+        run: echo "La ingesta falló. Revisar logs y GET /api/health en producción."

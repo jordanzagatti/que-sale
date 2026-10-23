@@ -1,0 +1,76 @@
+name: Mantenimiento
+
+on:
+  schedule:
+    - cron: "43 4 * * *"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Acción a ejecutar"
+        type: choice
+        required: true
+        default: cleanup
+        options:
+          - cleanup
+          - promote
+          - geo-backfill
+      source:
+        description: "Fuente para promote (opcional)"
+        required: false
+        default: ""
+      limit:
+        description: "Límite de filas"
+        required: false
+        default: "100"
+
+concurrency:
+  group: maintenance
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Cleanup programado
+        if: github.event_name == 'schedule' || inputs.action == 'cleanup'
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: npm run cleanup
+
+      - name: Promover staging
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'promote'
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          args="--limit=${{ inputs.limit || '100' }}"
+          if [ -n "${{ inputs.source }}" ]; then
+            args="$args --source=${{ inputs.source }}"
+          fi
+          npm run promote -- $args
+
+      - name: Geocodificar direcciones
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'geo-backfill'
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: npm run geo:backfill -- --limit=${{ inputs.limit || '100' }}

@@ -10,8 +10,12 @@ const GCBA_URLS = [
   "https://buenosaires.gob.ar/api/v1/eventos?limit=50",
 ];
 
-const EVENTBRITE_URL =
-  "https://www.eventbrite.com/d/argentina--buenos-aires/events/";
+const EVENTBRITE_URLS = [
+  "https://www.eventbrite.com/d/argentina--buenos-aires/events/",
+  "https://www.eventbrite.com/d/argentina--cordoba/events/",
+  "https://www.eventbrite.com/d/argentina--rosario/events/",
+  "https://www.eventbrite.com/d/argentina--mendoza/events/",
+];
 
 const PASSLINE_PAGE_URL = "https://www.passline.com/buenos-aires";
 const PASSLINE_API_URL =
@@ -313,33 +317,50 @@ function mapGCBA(raw: unknown): Partial<Evento> | null {
     descripcion: descripcion || undefined,
     lugar,
     barrio: str(event.field_barrio ?? event.barrio) || "CABA",
+    ciudad: "CABA",
+    provincia: "Ciudad Autónoma de Buenos Aires",
     fecha,
     precio: str(event.field_acceso ?? event.arancel ?? event.precio) || undefined,
     imagen: imagen || undefined,
     fuente: "gcba",
     url,
+    lat: Number(event.field_latitud ?? event.latitud) || undefined,
+    lng: Number(event.field_longitud ?? event.longitud) || undefined,
   };
 }
 
 // 2. EVENTBRITE - SCRAPING DEL JSON EMBEBIDO EN LA PÁGINA
 export async function fetchEventbrite(): Promise<Partial<Evento>[]> {
-  const res = await safeFetch(EVENTBRITE_URL, {}, 8000);
-  if (!res) return [];
+  const all: Partial<Evento>[] = [];
+  const seen = new Set<string>();
 
-  let html = "";
-  try {
-    html = await res.text();
-  } catch {
-    return [];
+  for (const url of EVENTBRITE_URLS) {
+    const res = await safeFetch(url, {}, 8000);
+    if (!res) continue;
+
+    let html = "";
+    try {
+      html = await res.text();
+    } catch {
+      continue;
+    }
+
+    const serverEvents = collectEventbriteServerData(html);
+    const events =
+      serverEvents.length > 0
+        ? serverEvents
+        : collectEventbriteFallback(html).slice(0, 20);
+
+    for (const event of events) {
+      const key = `${event.id ?? event.titulo}|${event.fecha}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      all.push(event);
+    }
   }
 
-  const events = collectEventbriteServerData(html);
-  if (events.length > 0) {
-    console.log(`Eventbrite ok ${events.length}`);
-    return events.slice(0, 50);
-  }
-
-  return collectEventbriteFallback(html).slice(0, 20);
+  console.log(`Eventbrite ok ${all.length}`);
+  return all.slice(0, 120);
 }
 
 /** Extrae `window.__SERVER_DATA__ = {...}` respetando strings y llaves. */
@@ -419,12 +440,19 @@ function collectEventbriteServerData(html: string): Partial<Evento>[] {
         lugar,
         barrio:
           str(address?.city) || str(address?.region) || "CABA",
+        ciudad: str(address?.city) || undefined,
+        provincia: str(address?.region) || undefined,
+        direccion: str(address?.localized_address_display) || undefined,
         fecha: toDateOnly(event.start_date) ?? undefined,
+        inicio: str(event.start_date) || undefined,
         imagen:
           str(image?.url) || str(asRecord(image?.original)?.url) || undefined,
         precio: event.is_free === true ? "Entrada libre" : "Consultar",
+        esGratis: event.is_free === true ? true : undefined,
         fuente: "eventbrite",
         url: str(event.url) || undefined,
+        lat: Number(venue?.latitude) || undefined,
+        lng: Number(venue?.longitude) || undefined,
       });
     }
   }
@@ -628,7 +656,9 @@ function mapPassline(raw: unknown): Partial<Evento> | null {
       "Buenos Aires",
     barrio:
       str(event.nombre_communa) || str(event.nombre_region) || "CABA",
+    ciudad: str(event.nombre_region) || undefined,
     fecha,
+    inicio: str(event.fecha_inicio) || undefined,
     precio: formatPasslinePrice(event.precio_min),
     imagen:
       str(event.miniatura) ||
@@ -638,37 +668,67 @@ function mapPassline(raw: unknown): Partial<Evento> | null {
     destacado: str(event.act_fullhome) === "1" ? true : undefined,
     fuente: "passline",
     url: str(event.url) || undefined,
+    urlEntrada: str(event.url) || undefined,
+    categoriaFuente: str(event.category_name ?? event.categoria) || undefined,
+    lat: Number(event.latitud) || undefined,
+    lng: Number(event.longitud) || undefined,
   };
 }
 
-// 4. TICKETMASTER
+// 4. TICKETMASTER - búsqueda nacional por ciudad
+const TICKETMASTER_CITIES = [
+  { name: "CABA", province: "Ciudad Autónoma de Buenos Aires", lat: -34.6037, lng: -58.3816 },
+  { name: "Córdoba", province: "Córdoba", lat: -31.4201, lng: -64.1888 },
+  { name: "Rosario", province: "Santa Fe", lat: -32.9442, lng: -60.6505 },
+  { name: "Mendoza", province: "Mendoza", lat: -32.8895, lng: -68.8458 },
+  { name: "La Plata", province: "Buenos Aires", lat: -34.9214, lng: -57.9545 },
+  { name: "Mar del Plata", province: "Buenos Aires", lat: -38.0055, lng: -57.5426 },
+  { name: "Salta", province: "Salta", lat: -24.7821, lng: -65.4232 },
+  { name: "San Miguel de Tucumán", province: "Tucumán", lat: -26.8241, lng: -65.2226 },
+];
+
 export async function fetchTicketmaster(): Promise<Partial<Evento>[]> {
   const key = process.env.TICKETMASTER_API_KEY;
   if (!key) return [];
 
-  const url =
-    "https://app.ticketmaster.com/discovery/v2/events.json" +
-    `?apikey=${encodeURIComponent(key)}` +
-    "&latlong=-34.6037,-58.3816&radius=100&unit=km&size=50&locale=*";
+  const all: Partial<Evento>[] = [];
+  const seen = new Set<string>();
 
-  const res = await safeFetch(url, {}, 6000);
-  if (!res) return [];
+  for (const city of TICKETMASTER_CITIES) {
+    const url =
+      "https://app.ticketmaster.com/discovery/v2/events.json" +
+      `?apikey=${encodeURIComponent(key)}` +
+      `&latlong=${city.lat},${city.lng}&radius=50&unit=km&size=50&locale=*` +
+      "&sort=date,asc";
 
-  try {
-    const json = asRecord(await res.json());
-    const events = asArray(asRecord(json?._embedded)?.events);
+    const res = await safeFetch(url, {}, 7000);
+    if (!res) continue;
 
-    console.log(`Ticketmaster ok ${events.length}`);
+    try {
+      const json = asRecord(await res.json());
+      const events = asArray(asRecord(json?._embedded)?.events);
 
-    return events
-      .map(mapTicketmaster)
-      .filter((event): event is Partial<Evento> => event !== null);
-  } catch {
-    return [];
+      for (const raw of events) {
+        const mapped = mapTicketmaster(raw, city);
+        if (!mapped) continue;
+        const dedupe = mapped.id ?? `${mapped.titulo}|${mapped.fecha}`;
+        if (seen.has(dedupe)) continue;
+        seen.add(dedupe);
+        all.push(mapped);
+      }
+    } catch {
+      // Seguimos con la próxima ciudad.
+    }
   }
+
+  console.log(`Ticketmaster ok ${all.length}`);
+  return all.slice(0, 200);
 }
 
-function mapTicketmaster(raw: unknown): Partial<Evento> | null {
+function mapTicketmaster(
+  raw: unknown,
+  fallbackCity?: { name: string; province: string; lat: number; lng: number },
+): Partial<Evento> | null {
   const event = asRecord(raw);
   if (!event) return null;
 
@@ -687,16 +747,31 @@ function mapTicketmaster(raw: unknown): Partial<Evento> | null {
       : `$${new Intl.NumberFormat("es-AR").format(Math.round(min))}`
     : "Consultar";
 
+  const venueCity = str(asRecord(venue?.city)?.name) || fallbackCity?.name;
+  const venueState =
+    str(asRecord(venue?.state)?.name) || fallbackCity?.province;
+  const lat = Number(asRecord(venue?.location)?.latitude);
+  const lng = Number(asRecord(venue?.location)?.longitude);
+  const dateTime = str(start?.dateTime);
+
   return {
     id: str(event.id) || undefined,
     titulo,
     descripcion: cleanHtml(str(event.info) || str(event.pleaseNote)) || undefined,
-    lugar: str(venue?.name) || "Buenos Aires",
-    barrio: str(asRecord(venue?.city)?.name) || "CABA",
+    lugar: str(venue?.name) || venueCity || "Argentina",
+    barrio: venueCity || "CABA",
+    ciudad: venueCity,
+    provincia: venueState,
+    direccion: str(asRecord(venue?.address)?.line1) || undefined,
     fecha,
+    inicio: dateTime || undefined,
     precio,
     imagen: str(asRecord(asArray(event.images)[0])?.url) || undefined,
     fuente: "ticketmaster",
     url: str(event.url) || undefined,
+    urlEntrada: str(event.url) || undefined,
+    organizador: str(asRecord(event.promoter)?.name) || undefined,
+    lat: Number.isFinite(lat) ? lat : fallbackCity?.lat,
+    lng: Number.isFinite(lng) ? lng : fallbackCity?.lng,
   };
 }

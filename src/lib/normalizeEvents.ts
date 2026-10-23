@@ -1,9 +1,13 @@
-import type { EventCategory } from "@/lib/mockEvents";
+import type { EventCategory } from "@/lib/types";
 import type {
   Evento,
   EventSource,
   NormalizedEvent,
 } from "@/lib/types";
+import {
+  CATEGORY_IMAGES,
+  inferCategory as inferCategoryFromText,
+} from "@/lib/categories";
 
 type TicketmasterEvent = {
   id?: string | number;
@@ -149,63 +153,7 @@ type PasslineEvent = {
   act_fullhome?: string;
 };
 
-const FALLBACK_IMAGES: Record<EventCategory, string> = {
-  Fiesta:
-    "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=1200&q=80",
-  Recital:
-    "https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?auto=format&fit=crop&w=1200&q=80",
-  Teatro:
-    "https://images.unsplash.com/photo-1503095396549-807759245b35?auto=format&fit=crop&w=1200&q=80",
-};
-
-const TEATRO_KEYWORDS = [
-  "teatro",
-  "theatre",
-  "theater",
-  "obra",
-  "funcion",
-  "comedia",
-  "stand up",
-  "standup",
-  "impro",
-  "danza",
-  "musical",
-  "titere",
-  "performing arts",
-];
-
-const FIESTA_KEYWORDS = [
-  "fiesta",
-  "boliche",
-  "milonga",
-  "rave",
-  "after",
-  "club",
-  "nightlife",
-  "halloween",
-  "cumbia",
-  "electronica",
-  "dj",
-  "baile",
-  "party",
-];
-
-const RECITAL_KEYWORDS = [
-  "musica",
-  "music",
-  "concierto",
-  "concert",
-  "recital",
-  "jazz",
-  "rock",
-  "orquesta",
-  "banda",
-  "indie",
-  "tango",
-  "sinfonica",
-  "festival",
-  "live",
-];
+const FALLBACK_IMAGES: Record<EventCategory, string> = CATEGORY_IMAGES;
 
 /** Texto plano, sin tildes y en minusculas para comparar. */
 function normalizeText(value: unknown): string {
@@ -229,18 +177,8 @@ function slugify(value: string): string {
     .slice(0, 60);
 }
 
-function hasKeyword(text: string, keywords: string[]): boolean {
-  return keywords.some((keyword) => text.includes(keyword));
-}
-
 function inferCategory(text: string): EventCategory {
-  const lower = normalizeText(text);
-
-  if (hasKeyword(lower, TEATRO_KEYWORDS)) return "Teatro";
-  if (hasKeyword(lower, FIESTA_KEYWORDS)) return "Fiesta";
-  if (hasKeyword(lower, RECITAL_KEYWORDS)) return "Recital";
-
-  return "Recital";
+  return inferCategoryFromText(text);
 }
 
 function pad(value: number | string): string {
@@ -811,6 +749,14 @@ const SOURCE_PREFIX: Record<EventSource, string> = {
   eventbrite: "eb",
   meetup: "meetup",
   passline: "passline",
+  cultura: "cultura",
+  alternativa: "alternativa",
+  ticketek: "ticketek",
+  timeout: "timeout",
+  plateanet: "plateanet",
+  jsonld: "jsonld",
+  manual: "manual",
+  unknown: "unknown",
 };
 
 /**
@@ -844,15 +790,27 @@ export function normalizePartialEvent(
         titulo,
         fecha,
       ),
+      slug: `${slugify(titulo) || "evento"}-${fecha}`,
       titulo,
       fecha,
+      startsAt: source.inicio,
+      endsAt: source.fin,
       lugar,
       barrio,
+      ciudad: cleanText(source.ciudad) || undefined,
+      provincia: cleanText(source.provincia) || undefined,
       categoria,
       precio: precio ? formatPrice(precio) : "Consultar",
       imagen,
       destacado: source.destacado === true ? true : undefined,
       fuente,
+      descripcion: cleanText(source.descripcion) || undefined,
+      urlFuente: cleanText(source.url) || undefined,
+      urlEntrada: cleanText(source.urlEntrada) || undefined,
+      lat: Number.isFinite(source.lat) ? source.lat : undefined,
+      lng: Number.isFinite(source.lng) ? source.lng : undefined,
+      esGratis: source.esGratis,
+      sourceId: source.id ? String(source.id) : undefined,
     };
   } catch (error) {
     console.error("[normalizePartialEvent] error", fuente, error);

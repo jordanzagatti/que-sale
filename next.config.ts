@@ -1,8 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
   images: {
+    // Vercel Hobby incluye 5.000 transformaciones por mes. Las imágenes de
+    // terceros se sirven tal cual vienen desde la fuente.
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: "https",
@@ -40,6 +42,20 @@ const nextConfig: NextConfig = {
         as: "*.css",
       },
     },
+  },
+  async headers() {
+    return [
+      {
+        source: "/sw.js",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=0, must-revalidate",
+          },
+          { key: "Service-Worker-Allowed", value: "/" },
+        ],
+      },
+    ];
   },
 };
 
