@@ -181,6 +181,7 @@ export async function getEventsFromDb(
     .from("events")
     .select("*")
     .eq("status", "active")
+    .eq("is_private", false)
     .gte("starts_at", from)
     .lte("starts_at", to)
     .order("starts_at", { ascending: true })

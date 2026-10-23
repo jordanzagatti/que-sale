@@ -35,7 +35,6 @@ function GoogleIcon() {
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [email, setEmail] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -44,7 +43,7 @@ export function LoginForm() {
   const displayError =
     error ||
     (callbackFailed
-      ? "No pudimos completar el ingreso. El link puede haber vencido; probá de nuevo."
+      ? "No pudimos completar el ingreso. Probá de nuevo con Google."
       : "");
 
   useEffect(() => {
@@ -56,30 +55,7 @@ export function LoginForm() {
 
   async function sendMagicLink(event: React.FormEvent) {
     event.preventDefault();
-    if (!email.trim() || status === "sending") return;
-
-    setStatus("sending");
-    setError("");
-    setMessage("");
-
-    try {
-      const supabase = createSupabaseBrowserClient();
-      const { error: authError } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback?next=/cuenta`,
-        },
-      });
-      if (authError) throw authError;
-
-      setStatus("sent");
-      setMessage(
-        `Te mandamos un link a ${email.trim()}. Revisá también la carpeta de spam.`,
-      );
-    } catch (caught) {
-      setStatus("idle");
-      setError(authErrorMessage(caught));
-    }
+    return;
   }
 
   async function continueWithGoogle() {
@@ -143,34 +119,6 @@ export function LoginForm() {
           </div>
         ) : null}
 
-        <form onSubmit={sendMagicLink} className="mt-6 space-y-3">
-          <label htmlFor="email" className="block text-xs font-medium text-zinc-300">
-            Tu email
-          </label>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              id="email"
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="vos@email.com"
-              className="h-11 min-w-0 flex-1 rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-violet-400/50 focus:ring-4 focus:ring-violet-500/10"
-            />
-            <button
-              type="submit"
-              disabled={status === "sending"}
-              className="inline-flex h-11 shrink-0 items-center justify-center rounded-xl bg-violet-500 px-5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 transition hover:bg-violet-400 disabled:opacity-60"
-            >
-              {status === "sending" ? "Enviando..." : "Entrar"}
-            </button>
-          </div>
-          <p className="text-[11px] leading-5 text-zinc-500">
-            Te enviamos un link mágico. No necesitás contraseña.
-          </p>
-        </form>
-
         {message ? (
           <p
             role="status"
@@ -192,7 +140,7 @@ export function LoginForm() {
         <div className="my-6 flex items-center gap-3">
           <span className="h-px flex-1 bg-white/10" />
           <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-zinc-600">
-            o continuá con
+            continuá con
           </span>
           <span className="h-px flex-1 bg-white/10" />
         </div>

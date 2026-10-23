@@ -4,15 +4,12 @@ import { notFound } from "next/navigation";
 import { cache, Suspense } from "react";
 
 import { AttendButton } from "@/components/AttendButton";
+import { AttendeesModalClient } from "@/components/AttendeesModalClient";
 import { FollowButtons } from "@/components/FollowButtons";
 import { ShareButton } from "@/components/ShareButton";
 import { SiteHeader } from "@/components/SiteHeader";
 import { categoryImage } from "@/lib/categories";
-import {
-  getAttendanceCount,
-  getEventBySlug,
-  getRelatedOccurrences,
-} from "@/lib/events";
+import { getEventBySlug, getRelatedOccurrences } from "@/lib/events";
 import { getEventosLive } from "@/lib/getEventos";
 import type { NormalizedEvent } from "@/lib/types";
 
@@ -90,13 +87,24 @@ const loadEvent = cache(async (slug: string) => {
 
 export async function generateMetadata({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }): Promise<Metadata> {
   const { slug } = await params;
+  const query = await searchParams;
+  const token = typeof query.t === "string" ? query.t : null;
   const event = await loadEvent(slug);
 
   if (!event) {
+    notFound();
+  }
+
+  const isPrivate = (event as any).is_private === true;
+  const shareToken = (event as any).share_token ?? null;
+  const canView = !isPrivate || token === shareToken;
+  if (isPrivate && !canView) {
     notFound();
   }
 
@@ -108,6 +116,7 @@ export async function generateMetadata({
         event,
       )}.`,
     alternates: { canonical: `/eventos/${slug}` },
+    robots: isPrivate ? { index: false, follow: false } : { index: true, follow: true },
     openGraph: {
       title: event.titulo,
       description: event.descripcion?.slice(0, 200) ?? undefined,
@@ -162,31 +171,44 @@ function EventSkeleton() {
 
 export default function EventPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   return (
     <Suspense fallback={<EventSkeleton />}>
-      <EventDetails params={params} />
+      <EventDetails params={params} searchParams={searchParams} />
     </Suspense>
   );
 }
 
 async function EventDetails({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { slug } = await params;
+  const query = await searchParams;
+  const token = typeof query.t === "string" ? query.t : null;
   const event = await loadEvent(slug);
 
   if (!event) notFound();
 
+  const eventRow = event as unknown as Record<string, unknown>;
+  const isPrivate = eventRow.is_private === true;
+  const shareTokenRow = (eventRow.share_token as string) ?? null;
+  if (isPrivate && token !== shareTokenRow) {
+    notFound();
+  }
+
   const isDbEvent = UUID_RE.test(event.id);
-  const [attendance, related] = await Promise.all([
-    isDbEvent ? getAttendanceCount(event.id) : Promise.resolve({ going: 0, interested: 0 }),
-    event.seriesId ? getRelatedOccurrences(event.seriesId, event.id) : Promise.resolve([]),
-  ]);
+
+  const related = event.seriesId
+    ? await getRelatedOccurrences(event.seriesId, event.id)
+    : [];
 
   const image = event.imagen || categoryImage(event.categoria);
   const time = formatTime(event);
@@ -303,7 +325,7 @@ async function EventDetails({
 
               <div className="mt-7 flex flex-wrap items-center gap-3">
                 {isDbEvent ? <AttendButton eventId={event.id} /> : null}
-                <ShareButton title={event.titulo} />
+                <ShareButton title={event.titulo} shareToken={shareTokenRow} isPrivate={isPrivate} />
                 <a
                   href={`/api/eventos/${encodeURIComponent(
                     event.slug ?? event.id,
@@ -325,14 +347,14 @@ async function EventDetails({
                   </svg>
                   Agendar
                 </a>
-                {event.urlEntrada ? (
+                {(event.urlEntrada || (eventRow.ticket_url as string | null)) ? (
                   <a
-                    href={event.urlEntrada}
+                    href={(event.urlEntrada || (eventRow.ticket_url as string)) as string}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex h-11 items-center gap-2 rounded-full bg-white px-5 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200"
                   >
-                    Entradas
+                    Comprar entradas
                     <span aria-hidden="true">↗</span>
                   </a>
                 ) : null}
@@ -398,10 +420,10 @@ async function EventDetails({
               </InfoRow>
               <InfoRow label="Entrada">{event.precio}</InfoRow>
               <InfoRow label="Asistencia">
-                {attendance.going} {attendance.going === 1 ? "persona va" : "personas van"}
-                {attendance.interested > 0
-                  ? ` · ${attendance.interested} interesadas`
-                  : ""}
+                <div>
+                  <p className="text-zinc-400">Solo el creador puede ver quién va.</p>
+                  <AttendeesModalClient eventId={event.id} createdBy={(eventRow.created_by as string) ?? null} />
+                </div>
               </InfoRow>
               <InfoRow label="Fuente">
                 {event.urlFuente ? (

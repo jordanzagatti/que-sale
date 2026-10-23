@@ -109,6 +109,7 @@ on conflict (id) do nothing;
 create table if not exists public.events (
   id uuid primary key default gen_random_uuid(),
   series_id uuid,
+  created_by uuid references auth.users (id) on delete set null,
   slug text not null unique,
   title text not null,
   normalized_title text,
@@ -144,6 +145,8 @@ create table if not exists public.events (
   fingerprint text not null unique,
   status text not null default 'active'
     check (status in ('active', 'cancelled', 'postponed', 'hidden')),
+  is_private boolean not null default false,
+  share_token uuid not null default gen_random_uuid(),
   featured boolean not null default false,
   tags text[] not null default '{}',
   metadata jsonb not null default '{}'::jsonb,
@@ -579,10 +582,23 @@ with check ((select auth.uid()) = id);
 
 drop policy if exists "profiles_insert_own" on public.profiles;
 
--- events (lectura pública de eventos activos)
+-- events (lectura pública de eventos activos). Los privados no se listan públicamente
 drop policy if exists "events_public_read" on public.events;
 create policy "events_public_read" on public.events
-for select to anon, authenticated using (status = 'active');
+for select to anon, authenticated using (status = 'active' and is_private = false);
+
+drop policy if exists "events_creator_read" on public.events;
+create policy "events_creator_read" on public.events
+for select to authenticated using (created_by = (select auth.uid()));
+
+drop policy if exists "events_insert_own" on public.events;
+create policy "events_insert_own" on public.events
+for insert to authenticated with check (created_by = (select auth.uid()));
+
+drop policy if exists "events_creator_update" on public.events;
+create policy "events_creator_update" on public.events
+for update to authenticated using (created_by = (select auth.uid()))
+with check (created_by = (select auth.uid()));
 
 -- saved_searches
 drop policy if exists "saved_searches_own" on public.saved_searches;
@@ -628,6 +644,7 @@ for select to authenticated using ((select auth.uid()) = user_id);
 grant usage on schema public to anon, authenticated, service_role;
 
 grant select on public.events to anon, authenticated;
+grant insert, update on public.events to authenticated;
 grant select on public.event_attendance_counts to anon, authenticated;
 grant select on public.event_attendance_counts to service_role;
 
@@ -664,6 +681,38 @@ grant all on public.geocode_cache to service_role;
 grant all on public.app_config to service_role;
 grant all on public.promotions to service_role;
 grant all on public.ingestion_runs_id_seq to service_role;
+
+-- Solo el creador puede ver la lista de asistentes
+create or replace function public.get_event_attendees(p_event_id uuid)
+returns table (
+  user_id uuid,
+  display_name text,
+  avatar_url text,
+  status text
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    a.user_id,
+    coalesce(p.display_name, 'Invitado') as display_name,
+    p.avatar_url,
+    a.status
+  from public.attendance a
+  left join public.profiles p on p.id = a.user_id
+  where a.event_id = p_event_id
+    and exists (
+      select 1 from public.events e
+      where e.id = p_event_id
+        and e.created_by = auth.uid()
+    )
+  order by a.created_at asc;
+$$;
+
+revoke all on function public.get_event_attendees(uuid) from public;
+grant execute on function public.get_event_attendees(uuid) to authenticated;
 
 grant execute on function public.nearby_events to anon, authenticated, service_role;
 grant execute on function public.search_events to anon, authenticated, service_role;

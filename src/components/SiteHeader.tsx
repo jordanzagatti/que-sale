@@ -1,9 +1,10 @@
 import Link from "next/link";
 
-export function SiteHeader({ active }: { active?: "eventos" | "mapa" | "cuenta" }) {
+export function SiteHeader({ active }: { active?: "eventos" | "mapa" | "cuenta" | "crear" }) {
   const links = [
     { id: "eventos", href: "/", label: "Eventos" },
     { id: "mapa", href: "/mapa", label: "Mapa" },
+    { id: "crear", href: "/eventos/crear", label: "Crear evento" },
     { id: "cuenta", href: "/cuenta", label: "Mi agenda" },
   ] as const;
 

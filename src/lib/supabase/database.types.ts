@@ -41,7 +41,7 @@ export type Database = {
         Relationships: [];
       };
     };
-    Functions: {
+    Functions: { get_event_attendees: { Args: { p_event_id: string }; Returns: Array<any>; },
       nearby_events: {
         Args: {
           p_lat: number;
